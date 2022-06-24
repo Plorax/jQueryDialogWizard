@@ -1,6 +1,6 @@
 ## Dialog Wizard
 
-3 step exmaple
+3 step example
 https://jacquesmostert.com/github/jQueryDialogWizard/examples/3step.html
 
 Similar to any setup wizard you've had to run to install software on your desktop.
