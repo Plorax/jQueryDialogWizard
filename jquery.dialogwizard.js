@@ -6,7 +6,7 @@
  * @requires 'JQueryUI Dialog'
  */
 
- (function (window, document, $, undefined) {
+(function (window, document, $, undefined) {
   "use strict";
 
   /**
@@ -61,6 +61,12 @@
 
       // console.log("init " + this.dialog_id);
     },
+    step: function () {
+      return this.ops.current_step;
+    },
+    steps: function () {
+      return this.ops.max_steps;
+    },
     show: function (internal = false) {
       var $this = this;
       // console.log(this.ops);
@@ -68,7 +74,7 @@
 
       if (this.dlg == null) {
         this.dlg = $("#" + this.dialog_id).dialog({
-          dialogClass: "no-close",
+          dialogClass: this.ops.dialog_class,
           closeOnEscape: false,
           autoShow: false,
           autoOpen: false,
@@ -96,6 +102,9 @@
       } else {
         $("div[id='" + this.dialog_id + "']").css("opacity", "0");
       }
+
+      this.ops.on_show = this.ops.on_show.bind($this, $this.ops, $this);
+      this.ops.on_close = this.ops.on_close.bind($this, $this.ops, $this);
 
       // apply user CSS styles
       this.ops.apply_styles = this.ops.apply_styles.bind(
@@ -169,7 +178,12 @@
               : 1;
 
           let button_onclick = eval($($button_this).data("onclick"));
-          let button_handler = button_onclick.bind(this, $this.ops, $this);
+          let button_handler = button_onclick.bind(
+            this,
+            $this.ops,
+            $this,
+            window.event
+          );
 
           $this.ops.buttons.push({
             step: button_step,
@@ -230,6 +244,8 @@
 
       if (form != null) {
         if ($ops.custom_events.length > 0) {
+          console.log("on form submit entering custom_events");
+
           $(form).unbind("submit");
           $(form).bind("submit", function (event) {
             event.preventDefault();
@@ -269,33 +285,7 @@
             return false;
           });
         } else {
-          // Handle onsubmit automatically
-          $(form).unbind("submit");
-
-          var on_submit = function (ops, dlg, event) {
-            console.log("on_submit called");
-
-            $("#" + dlg.dialog_id + " button[type='submit']").prop(
-              "disabled",
-              true
-            );
-
-            if (!dlg.validateForm()) {
-              event.preventDefault();
-              $("#" + dlg.dialog_id + " button[type='submit']").prop(
-                "disabled",
-                false
-              );
-              return false;
-            }
-
-            return true;
-          };
-
-          $(form).bind("submit", function (event) {
-            console.log("internal: form.submit() called");
-            return on_submit($this.ops, $this, event);
-          });
+          $this.applyFormHooks();
         }
       }
 
@@ -324,6 +314,7 @@
       this.ops.apply_styles();
       this.ops.apply_button_types();
       this.dlg.dialog("open");
+      this.ops.on_show();
 
       if (!internal) {
         $("div[aria-describedby='" + this.dialog_id + "']").animate(
@@ -333,6 +324,75 @@
       } else {
         $("div[id='" + this.dialog_id + "']").animate({ opacity: 1.0 }, 250);
       }
+    },
+    applyFormHooks: function () {
+      console.log("applying form hooks");
+
+      let $this = this;
+      let form = $("#" + this.dialog_id + " form");
+
+      // Handle onsubmit automatically
+      $(form).unbind("submit");
+
+      $this.ops.on_form_submit = function (ops, dlg, event) {
+        console.log("on_submit called " + dlg.dialog_id);
+
+        $("#" + dlg.dialog_id + " button[type='submit']").prop(
+          "disabled",
+          true
+        );
+
+        if (!dlg.validateForm()) {
+          event.preventDefault();
+          $("#" + dlg.dialog_id + " button[type='submit']").prop(
+            "disabled",
+            false
+          );
+          return false;
+        }
+
+        let on_after_ajax_post = $("#" + dlg.dialog_id + " form").data(
+          "on-ajax-after-submit"
+        );
+        let onAfterAjaxPost =
+          on_after_ajax_post != undefined ? eval(on_after_ajax_post) : null;
+
+        let isAjaxPost =
+          $("#" + dlg.dialog_id + " form").data("method") === "ajax-post";
+        let ajaxFormAction = $("#" + dlg.dialog_id + " form").prop("action");
+
+        console.log("isAjaxPost = " + isAjaxPost);
+
+        if (isAjaxPost) {
+          event.preventDefault();
+          let formData = $this.formData();
+          $.ajax({
+            url: ajaxFormAction,
+            data: formData,
+            type: "POST",
+            dataType: "json",
+            success: function (data) {
+              if (data.success == true) {
+                if (onAfterAjaxPost != undefined && onAfterAjaxPost != null) {
+                  onAfterAjaxPost($this.ops, $this);
+                }
+                $this.close();
+              } else {
+                alert(
+                  "An unknown error has occurred. Please try again or log a support ticket."
+                );
+              }
+            },
+          });
+        }
+
+        return false;
+      };
+
+      $(form).bind("submit", function (event) {
+        console.log("internal: form.submit() called");
+        return $this.ops.on_form_submit($this.ops, $this, event);
+      });
     },
     next: function () {
       var $this = this;
@@ -404,6 +464,8 @@
           }
         }
       }
+
+      this.ops.on_close();
     },
     final: function (time = 510) {
       var $this = this;
@@ -424,6 +486,24 @@
       var $this = this;
       $this.ops.current_step = 1;
       $this.show();
+    },
+    setElementText: function (element_identifier, text) {
+      $("#" + this.dialog_id)
+        .find(element_identifier)
+        .text(text);
+    },
+    setElementValue: function (element_identifier, value) {
+      $("#" + this.dialog_id)
+        .find(element_identifier)
+        .val(value);
+    },
+    setElementHTML: function (element_identifier, html) {
+      $("#" + this.dialog_id)
+        .find(element_identifier)
+        .html($("<textarea/>").html(html).text());
+    },
+    setStepContent: function (step, content) {
+      this.setMessageText(step, content);
     },
     setMessageText: function (index, message) {
       var $this = this;
@@ -454,7 +534,28 @@
       $(form).submit();
     },
     populateFields: function (field_values_data = {}, field_mappings = {}) {
+      const replaceQualifier = (m, qualifier, value) =>
+        m.replace(
+          new RegExp(qualifier.replace(/\[/g, "\\["), "gi"),
+          value ? `${value}` : ""
+        );
+
+      let html = $("#" + this.dialog_id).html();
+      for (let field in field_values_data) {
+        let lookup_field =
+          field_mappings[field] == undefined ? field : field_mappings[field];
+
+        html = replaceQualifier(
+          html,
+          `{{${lookup_field}}}`,
+          field_values_data[field]
+        );
+      }
+      $("#" + this.dialog_id).html(html);
+      // console.log(html);
+
       let form_field_values = {};
+
       for (let field in field_values_data) {
         console.log(
           "populateFields " + field + " = " + field_values_data[field]
@@ -462,8 +563,10 @@
 
         if (field in field_mappings) {
           form_field_values[field_mappings[field]] = field_values_data[field];
+          console.log("field_mappings[field] = " + field_mappings[field]);
         }
       }
+
       console.log(JSON.stringify(form_field_values));
 
       for (let field in form_field_values) {
@@ -502,12 +605,11 @@
         )
         .not(":button, :reset, :disabled")
         .each(function () {
-          if (
-            $(this).find("span[name='empty']") != null ||
-            $(this).val() == "" ||
-            $(this).val() == null
-          ) {
-            let element_name = $(this).prop("name");
+          let element_name = $(this).prop("name");
+          let contains_empty_span =
+            $(this).find("span[name='empty']").length > 0;
+          let is_visible = $(this).css("display") === "";
+          if (is_visible && (contains_empty_span || $(this).val() === "")) {
             if (element_name != "" && element_name != undefined) {
               errors.push($(this).prop("name"));
               fields.push($(this).prop("title"));
@@ -528,8 +630,6 @@
         return false;
       }
 
-      this.close();
-
       return true;
     },
     formData: function () {
@@ -539,43 +639,55 @@
         .find("input")
         .not(":button, :reset, :checkbox")
         .each(function () {
-          let form_name_value = $(this).prop("name");
-          let form_input_value = $(this).val();
-          form_data[form_name_value] = form_input_value;
+          if (!$(this).is(":disabled")) {
+            let form_name_value = $(this).prop("name");
+            let form_input_value = $(this).val();
+            form_data[form_name_value] = form_input_value;
+          }
         });
 
       $("#" + this.dialog_id)
         .find("select")
         .not(":text, :reset, :button")
         .each(function () {
-          let form_name_value = $(this).prop("name");
-          let form_input_value = $(this).find(":selected").val();
-          form_data[form_name_value] = escape(form_input_value);
+          if (!$(this).is(":disabled")) {
+            let form_name_value = $(this).prop("name");
+            let form_input_value = $(this).find(":selected").val();
+            form_data[form_name_value] = escape(form_input_value);
+          }
         });
 
       $("#" + this.dialog_id)
         .find("textarea")
         .each(function () {
-          let form_name_value = $(this).prop("name");
-          let form_input_value = $(this).text();
-          form_data[form_name_value] = escape(form_input_value);
+          if (!$(this).is(":disabled")) {
+            let form_name_value = $(this).prop("name");
+            let form_input_value = $(this).val();
+            form_data[form_name_value] = escape(form_input_value);
+          }
         });
 
       $("#" + this.dialog_id)
         .find("input[type='checkbox']")
         .each(function () {
-          let form_name_value = $(this).prop("name");
-          let form_input_value = $(this).val();
-          let checked_state = $(this).is(":checked");
-          form_data[form_name_value] =
-            checked_state == "checked" ||
-            checked_state == "true" ||
-            checked_state == true
-              ? form_input_value
-              : "";
+          if (!$(this).is(":disabled")) {
+            let form_name_value = $(this).prop("name");
+            let form_input_value = $(this).val();
+            let checked_state = $(this).is(":checked");
+            form_data[form_name_value] =
+              checked_state == "checked" ||
+              checked_state == "true" ||
+              checked_state == true
+                ? form_input_value
+                : "";
+          }
         });
 
       return form_data;
+    },
+    applyHooks: function () {
+      console.log(this.dialog_id + " applying dialog global hooks");
+      applyGlobalHook();
     },
     // @todo add methods
   };
@@ -634,11 +746,151 @@
   };
 
   function applyGlobalHook() {
+    $("a[data-dw='toggle']").each(function () {
+      let hreftarget = this;
+      let alreadySetup = $(hreftarget).data("dialogx-href-setup") != undefined;
+      if (!alreadySetup) {
+        $(hreftarget).data("dialogx-href-setup", "true");
+
+        $(hreftarget).on("click", function (event) {
+          event.preventDefault();
+
+          let target_id = $(this).data("target");
+          let html = $("div[id='" + target_id + "'][data-dw='dialogX']").html();
+
+          let get_field_values_url = $(this).data("fetch-field-values-url");
+          let field_values_data = {};
+          let dialogx_styles = parseBase64Style($(this).data("dialogx-styles"));
+          let override_options = parseParametersIntoObject(
+            $("div[id='" + target_id + "'][data-dw='dialogX']").data(
+              "dialogx-options"
+            )
+          );
+          let field_mappings = parseParametersIntoObject(
+            $("div[id='" + target_id + "'][data-dw='dialogX']").data(
+              "dialogx-field-mappings"
+            )
+          );
+
+          if (get_field_values_url != undefined && get_field_values_url != "") {
+            let $this = this;
+            $.ajax({
+              url: get_field_values_url,
+              dataType: "json",
+              type: "GET",
+              success: function (response) {
+                field_values_data = response.data;
+
+                console.log(override_options);
+                let default_dialog_options = {
+                  dialog_styles: $.extend(
+                    {},
+                    {
+                      ".ui-widget-header": {
+                        "background-color": "#0000C9",
+                        color: "#fff",
+                      },
+                      ".ui-dialog-buttonset button": "btn btn-primary",
+                    },
+                    dialogx_styles
+                  ),
+                  current_step: 1,
+                  position: {
+                    at: "center",
+                    my: "center",
+                    of: window,
+                    within: window,
+                  },
+                  step_load: [
+                    {
+                      step: 1,
+                      handler: function () {
+                        this.populateFields(field_values_data, field_mappings);
+                        this.applyHooks();
+                      },
+                    },
+                  ],
+                  step_titles: {
+                    1: "",
+                  },
+                  step_contents: {
+                    1: html,
+                  },
+                  buttons: [],
+                };
+
+                let $dlg = $.dialogWizard(
+                  $.extend(default_dialog_options, override_options)
+                );
+                $dlg.reset();
+              },
+            });
+          } else {
+            let dialogx_styles = parseBase64Style(
+              $(this).data("dialogx-styles")
+            );
+            let override_options = parseParametersIntoObject(
+              $("div[id='" + target_id + "'][data-dw='dialogX']").data(
+                "dialogx-options"
+              )
+            );
+
+            console.log(override_options);
+            let default_dialog_options = {
+              dialog_styles: $.extend(
+                {},
+                {
+                  ".ui-widget-header": {
+                    "background-color": "#0000C9",
+                    color: "#fff",
+                  },
+                  ".ui-dialog-buttonset button": "btn btn-primary",
+                },
+                dialogx_styles
+              ),
+              current_step: 1,
+              position: {
+                at: "center",
+                my: "center",
+                of: window,
+                within: window,
+              },
+              step_titles: {
+                1: "",
+              },
+              step_contents: {
+                1: html,
+              },
+              step_load: [
+                {
+                  step: 1,
+                  handler: function () {
+                    this.applyHooks();
+                  },
+                },
+              ],
+              buttons: [],
+            };
+
+            let $dlg = $.dialogWizard(
+              $.extend(default_dialog_options, override_options)
+            );
+            $dlg.reset();
+          }
+        });
+      }
+    });
+
     $("div[data-dw='dialogX']").each(function () {
       let $this = $(this);
       let hreftarget = $(
         "a[data-dw='toggle'][data-target='" + $this.attr("id") + "']"
       );
+      let alreadySetup = $(hreftarget).data("dialogx-href-setup") != undefined;
+      if (alreadySetup) {
+        return;
+      }
+      $(hreftarget).data("dialogx-href-setup", "true");
       $(hreftarget).on("click", function (event) {
         event.preventDefault();
 
@@ -693,6 +945,7 @@
                     step: 1,
                     handler: function () {
                       this.populateFields(field_values_data, field_mappings);
+                      this.applyHooks();
                     },
                   },
                 ],
@@ -745,6 +998,14 @@
             step_contents: {
               1: html,
             },
+            step_load: [
+              {
+                step: 1,
+                handler: function () {
+                  this.applyHooks();
+                },
+              },
+            ],
             buttons: [],
           };
 
@@ -794,6 +1055,22 @@
       close: function (id) {
         $(id).dw("close");
       },
+      alert: function (msg, title = "Alert") {
+        let dlg = $.dialogWizard({
+          step_titles: { 1: title },
+          step_contents: { 1: msg },
+          buttons: [
+            {
+              step: 1,
+              title: "OK",
+              handler: function () {
+                this.close();
+              },
+            },
+          ],
+        });
+        dlg.reset();
+      },
     },
   });
 
@@ -813,6 +1090,9 @@
       },
       ".ui-dialog-buttonset button": "btn btn-primary",
     },
+    dialog_class: "no-close",
+    on_close: function () {},
+    on_show: function () {},
     max_steps: 1,
     step_titles: {},
     step_contents: {},
